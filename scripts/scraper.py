@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-import requests
-from bs4 import BeautifulSoup
 import json
 import os
-import sys
+import time
 from datetime import datetime
 from pathlib import Path
-from huggingface_hub import HfApi, create_repo
-import time
+from huggingface_hub import HfApi
 import feedparser
 
-api = HfApi()
-HF_TOKEN = os.getenv('HF_TOKEN')
+# --- CONFIGURATION ---
 DATA_DIR = 'data'
-MAX_FILE_SIZE = 90 * 1024 * 1024  # 90MB
+MAX_FILE_SIZE = 90 * 1024 * 1024  # 90 MB
+HF_TOKEN = os.getenv('HF_TOKEN')
+api = HfApi()
 
-# --- NEWS SOURCES ---
+# --- SOURCES ---
 NEWS_SOURCES = {
     'tech': [
         'https://feeds.theverge.com/theverge/index.xml',
@@ -50,95 +48,89 @@ NEWS_SOURCES = {
 }
 
 def fetch_news(category, sources):
-    """Fetch news safely. If one source fails, it skips to the next."""
+    """Fetch news from RSS feeds."""
     articles = []
-    for source_url in sources:
+    print(f"  > Fetching {category} news...")
+    for source in sources:
         try:
-            feed = feedparser.parse(source_url)
-            if not feed.entries:
-                continue
-                
+            feed = feedparser.parse(source)
+            if not feed.entries: continue
+            
+            # Get latest 5 articles
             for entry in feed.entries[:5]:
-                article = {
+                articles.append({
                     'title': entry.get('title', 'No Title'),
-                    'description': entry.get('summary', 'No Description'),
-                    'link': entry.get('link', source_url),
-                    'source': source_url,
+                    'link': entry.get('link', source),
+                    'description': entry.get('summary', 'No summary'),
                     'category': category,
-                    'published': entry.get('published', datetime.now().isoformat()),
-                    'fetched_at': datetime.now().isoformat()
-                }
-                articles.append(article)
+                    'source': source,
+                    'published': entry.get('published', str(datetime.now())),
+                    'fetched_at': str(datetime.now())
+                })
         except Exception as e:
-            print(f"  ⚠ Skipped {source_url}: {e}")
+            print(f"    ! Error reading {source}: {e}")
     return articles
 
-def manage_file_size(category):
+def manage_github_storage(category):
     """
-    1. Checks if file exists (restored from Git).
-    2. If > 90MB, deletes it (Rotates).
-    3. Returns the filename to write to.
+    Manages the local file in the GitHub repo.
+    If file > 90MB, delete it (rotate).
     """
     Path(DATA_DIR).mkdir(exist_ok=True)
     filename = f"{DATA_DIR}/{category}.jsonl"
     
     if os.path.exists(filename):
-        size = os.path.getsize(filename)
-        # If file is too big, delete it to start fresh
-        if size >= MAX_FILE_SIZE:
-            print(f"♻ Rotating file: {filename} (Size: {size/1024/1024:.2f} MB)")
+        size_mb = os.path.getsize(filename) / (1024 * 1024)
+        if size_mb >= 90:
+            print(f"  ♻ ROTATING: File {filename} is {size_mb:.2f}MB. Deleting to start fresh.")
             os.remove(filename)
+        else:
+            print(f"  ✓ STORAGE: File {filename} is {size_mb:.2f}MB. Appending...")
     
     return filename
 
-def append_articles(category, articles):
-    """Opens file in APPEND mode ('a') so we don't overwrite history."""
-    filename = manage_file_size(category)
+def save_and_upload(category, articles):
+    """Saves to GitHub folder first, then uploads to HF."""
+    if not articles: return
+
+    # 1. Save to GitHub Storage (Append Mode)
+    filename = manage_github_storage(category)
     try:
         with open(filename, 'a', encoding='utf-8') as f:
             for article in articles:
-                f.write(json.dumps(article, ensure_ascii=False) + '\n')
-        print(f"  ✓ Appended {len(articles)} articles to {filename}")
-        return filename
+                f.write(json.dumps(article) + '\n')
+        print(f"  ✓ SAVED: Added {len(articles)} articles to {filename}")
     except Exception as e:
-        print(f"  ✗ Error writing file: {e}")
-        return None
-
-def upload_to_hf(category, filename):
-    """Uploads the updated file to Hugging Face."""
-    if not filename or not os.path.exists(filename):
+        print(f"  ✗ SAVE ERROR: {e}")
         return
-    
+
+    # 2. Upload to Hugging Face
     repo_id = f"Sachin21112004/news-{category}-dataset"
     try:
         api.upload_file(
             path_or_fileobj=filename,
-            path_in_repo=os.path.basename(filename),
+            path_in_repo=f"{category}.jsonl", # Always keeps one main file on HF
             repo_id=repo_id,
             repo_type="dataset",
             token=HF_TOKEN
         )
-        print(f"  ✓ Synced {category} to Hugging Face")
+        print(f"  ✓ UPLOADED: Synced {filename} to Hugging Face")
     except Exception as e:
-        print(f"  ✗ HF Upload Error: {e}")
+        print(f"  ✗ UPLOAD ERROR: {e}")
 
 def main():
-    print(f"Starting pipeline at {datetime.now().isoformat()}")
+    print(f"Starting pipeline at {datetime.now()}")
     
-    # Iterate through all categories properly
     for category, sources in NEWS_SOURCES.items():
         print(f"\n--- Processing {category.upper()} ---")
         try:
             articles = fetch_news(category, sources)
-            if articles:
-                filename = append_articles(category, articles)
-                upload_to_hf(category, filename)
-            else:
-                print(f"  ⚠ No new articles for {category}")
+            save_and_upload(category, articles)
         except Exception as e:
-            # THIS IS THE FIX: Catches crashes so Politics still runs!
-            print(f"  CRITICAL ERROR in {category}: {e}")
-            continue
+            print(f"  CRITICAL FAILURE in {category}: {e}")
+            continue # Ensures we move to next category even if one fails
+            
+    print("\n✓ Pipeline Finished")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
