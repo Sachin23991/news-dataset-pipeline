@@ -5,8 +5,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from huggingface_hub import HfApi, create_repo, CommitOperationAdd, commit
-import feedparser
+from huggingface_hub import HfApi, create_repo
 from urllib.parse import urljoin
 import time
 
