@@ -6,14 +6,15 @@ import os
 from datetime import datetime
 from pathlib import Path
 from huggingface_hub import HfApi, create_repo
-from urllib.parse import urljoin
 import time
+import feedparser  # Added missing import
 
 api = HfApi()
 HF_TOKEN = os.getenv('HF_TOKEN')
 DATA_DIR = 'data'
 MAX_FILE_SIZE = 90 * 1024 * 1024  # 90MB
 
+# News Sources Dictionary (Kept same as your original)
 NEWS_SOURCES = {
     'tech': [
         'https://feeds.theverge.com/theverge/index.xml',
@@ -97,7 +98,7 @@ def fetch_news(category, sources):
     for source_url in sources:
         try:
             feed = feedparser.parse(source_url)
-            for entry in feed.entries[:5]:  # Get 5 latest from each source
+            for entry in feed.entries[:5]:
                 article = {
                     'title': entry.get('title', ''),
                     'description': entry.get('summary', ''),
@@ -114,21 +115,25 @@ def fetch_news(category, sources):
         time.sleep(0.5)
     return articles
 
-def get_next_filename(category):
-    """Get the next filename with rollover at 90MB"""
+def manage_file_size(category):
+    """
+    Checks file size. If > 90MB, delete it so a new one is created.
+    Returns the fixed filename for the category.
+    """
     Path(DATA_DIR).mkdir(exist_ok=True)
-    counter = 1
-    while True:
-        filename = f"{DATA_DIR}/{category}_{counter:03d}.jsonl"
-        if not os.path.exists(filename):
-            return filename
-        if os.path.getsize(filename) < MAX_FILE_SIZE:
-            return filename
-        counter += 1
+    filename = f"{DATA_DIR}/{category}.jsonl"
+    
+    if os.path.exists(filename):
+        size = os.path.getsize(filename)
+        if size >= MAX_FILE_SIZE:
+            print(f"⚠ File {filename} exceeds {MAX_FILE_SIZE} bytes. Deleting to start fresh.")
+            os.remove(filename)
+    
+    return filename
 
 def append_articles(category, articles):
     """Append articles to JSONL file"""
-    filename = get_next_filename(category)
+    filename = manage_file_size(category)
     with open(filename, 'a', encoding='utf-8') as f:
         for article in articles:
             f.write(json.dumps(article, ensure_ascii=False) + '\n')
@@ -142,21 +147,21 @@ def upload_to_hf(category, filename):
     
     repo_id = f"Sachin21112004/news-{category}-dataset"
     try:
-        with open(filename, 'rb') as f:
-            api.upload_file(
-                path_or_fileobj=f,
-                path_in_repo=os.path.basename(filename),
-                repo_id=repo_id,
-                repo_type="dataset",
-                token=HF_TOKEN
-            )
+        print(f"Uploading {filename} to {repo_id}...")
+        api.upload_file(
+            path_or_fileobj=filename,
+            path_in_repo=os.path.basename(filename), # Will overwrite the file on HF
+            repo_id=repo_id,
+            repo_type="dataset",
+            token=HF_TOKEN
+        )
         print(f"✓ Uploaded {filename} to {repo_id}")
     except Exception as e:
         print(f"✗ Error uploading to HF: {str(e)}")
 
 def main():
     print(f"Starting news scraper at {datetime.now().isoformat()}")
-#     ensure_hf_datasets()
+    # ensure_hf_datasets() # Optional: Run this if you suspect repos don't exist
     
     for category, sources in NEWS_SOURCES.items():
         print(f"\n=== Fetching {category.upper()} news ===")
