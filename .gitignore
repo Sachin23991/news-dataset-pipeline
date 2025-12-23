@@ -33,11 +33,6 @@ ENV/
 *.swo
 *~
 
-# Data files
-data/
-*.jsonl
-*.json
-
 # Environment variables
 .env
 .env.local
