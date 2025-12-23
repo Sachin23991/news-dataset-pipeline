@@ -3,18 +3,19 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from huggingface_hub import HfApi, create_repo
 import time
-import feedparser  # Added missing import
+import feedparser
 
 api = HfApi()
 HF_TOKEN = os.getenv('HF_TOKEN')
 DATA_DIR = 'data'
 MAX_FILE_SIZE = 90 * 1024 * 1024  # 90MB
 
-# News Sources Dictionary (Kept same as your original)
+# --- NEWS SOURCES (Same as before) ---
 NEWS_SOURCES = {
     'tech': [
         'https://feeds.theverge.com/theverge/index.xml',
@@ -78,26 +79,16 @@ NEWS_SOURCES = {
     ]
 }
 
-def ensure_hf_datasets():
-    for category in NEWS_SOURCES.keys():
-        repo_id = f"Sachin21112004/news-{category}-dataset"
-        try:
-            api.repo_info(repo_id, token=HF_TOKEN)
-        except:
-            create_repo(
-                repo_id=repo_id,
-                repo_type="dataset",
-                private=False,
-                token=HF_TOKEN
-            )
-            print(f"Created {repo_id}")
-
 def fetch_news(category, sources):
-    """Fetch news from RSS feeds"""
+    """Fetch news from RSS feeds with individual error handling"""
     articles = []
     for source_url in sources:
         try:
             feed = feedparser.parse(source_url)
+            if not feed.entries:
+                print(f"  ⚠ No entries found for {source_url}")
+                continue
+                
             for entry in feed.entries[:5]:
                 article = {
                     'title': entry.get('title', ''),
@@ -109,24 +100,22 @@ def fetch_news(category, sources):
                     'fetched_at': datetime.now().isoformat()
                 }
                 articles.append(article)
-                print(f"✓ {category}: {article['title'][:60]}...")
+            print(f"  ✓ Fetched {len(feed.entries[:5])} items from {source_url}")
         except Exception as e:
-            print(f"✗ Error fetching {source_url}: {str(e)}")
-        time.sleep(0.5)
+            print(f"  ✗ Error fetching {source_url}: {str(e)}")
+        # Reduced sleep to speed up pipeline
+        time.sleep(0.2)
     return articles
 
 def manage_file_size(category):
-    """
-    Checks file size. If > 90MB, delete it so a new one is created.
-    Returns the fixed filename for the category.
-    """
+    """Check file size and delete if > 90MB"""
     Path(DATA_DIR).mkdir(exist_ok=True)
     filename = f"{DATA_DIR}/{category}.jsonl"
     
     if os.path.exists(filename):
         size = os.path.getsize(filename)
         if size >= MAX_FILE_SIZE:
-            print(f"⚠ File {filename} exceeds {MAX_FILE_SIZE} bytes. Deleting to start fresh.")
+            print(f"⚠ File {filename} is {size/1024/1024:.2f}MB. Deleting to reset...")
             os.remove(filename)
     
     return filename
@@ -134,42 +123,52 @@ def manage_file_size(category):
 def append_articles(category, articles):
     """Append articles to JSONL file"""
     filename = manage_file_size(category)
-    with open(filename, 'a', encoding='utf-8') as f:
-        for article in articles:
-            f.write(json.dumps(article, ensure_ascii=False) + '\n')
-    print(f"Appended {len(articles)} articles to {filename}")
-    return filename
+    try:
+        with open(filename, 'a', encoding='utf-8') as f:
+            for article in articles:
+                f.write(json.dumps(article, ensure_ascii=False) + '\n')
+        print(f"  ✓ Saved {len(articles)} articles to {filename}")
+        return filename
+    except Exception as e:
+        print(f"  ✗ Error writing to file: {e}")
+        return None
 
 def upload_to_hf(category, filename):
-    """Upload file to Hugging Face dataset"""
-    if not os.path.exists(filename) or os.path.getsize(filename) == 0:
+    """Upload to Hugging Face"""
+    if not filename or not os.path.exists(filename):
         return
     
     repo_id = f"Sachin21112004/news-{category}-dataset"
     try:
-        print(f"Uploading {filename} to {repo_id}...")
         api.upload_file(
             path_or_fileobj=filename,
-            path_in_repo=os.path.basename(filename), # Will overwrite the file on HF
+            path_in_repo=os.path.basename(filename),
             repo_id=repo_id,
             repo_type="dataset",
             token=HF_TOKEN
         )
-        print(f"✓ Uploaded {filename} to {repo_id}")
+        print(f"  ✓ Uploaded to {repo_id}")
     except Exception as e:
-        print(f"✗ Error uploading to HF: {str(e)}")
+        print(f"  ✗ HF Upload failed: {str(e)}")
 
 def main():
     print(f"Starting news scraper at {datetime.now().isoformat()}")
-    # ensure_hf_datasets() # Optional: Run this if you suspect repos don't exist
     
+    # We iterate nicely. If one category crashes, we catch it and move to the next.
     for category, sources in NEWS_SOURCES.items():
-        print(f"\n=== Fetching {category.upper()} news ===")
-        articles = fetch_news(category, sources)
-        if articles:
-            filename = append_articles(category, articles)
-            upload_to_hf(category, filename)
-    
+        print(f"\n=== Processing: {category.upper()} ===")
+        try:
+            articles = fetch_news(category, sources)
+            if articles:
+                filename = append_articles(category, articles)
+                upload_to_hf(category, filename)
+            else:
+                print(f"  ⚠ No articles found for {category}")
+        except Exception as e:
+            # THIS IS KEY: We catch the crash here so the script doesn't die.
+            print(f"  CRITICAL ERROR processing {category}: {e}")
+            continue
+
     print(f"\n✓ Scraper completed at {datetime.now().isoformat()}")
 
 if __name__ == '__main__':
