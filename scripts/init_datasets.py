@@ -13,7 +13,7 @@ def init_datasets():
     Run this once to create empty dataset repositories.
     """
     for category in CATEGORIES:
-        repo_id = f"Sachin23991/news-{category}-dataset"
+        repo_id = f"Sachin21112004/news-{category}-dataset"
         try:
             # Check if repo exists
             api.repo_info(repo_id, repo_type="dataset", token=HF_TOKEN)
@@ -38,4 +38,4 @@ if __name__ == '__main__':
     print("\n✓ All datasets initialized!")
     print("\nDatasets created:")
     for category in CATEGORIES:
-        print(f"  https://huggingface.co/datasets/Sachin23991/news-{category}-dataset")
+        print(f"  https://huggingface.co/datasets/Sachin21112004/news-{category}-dataset")
