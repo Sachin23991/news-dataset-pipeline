@@ -1,0 +1,42 @@
+name: News Dataset Pipeline
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  scrape-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 feedparser huggingface-hub python-dateutil
+      
+      - name: Run news scraper
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python scripts/scraper.py
+      
+      - name: Configure Git
+        run: |
+          git config --global user.name 'Sachin23991'
+          git config --global user.email 'sachinraosahab7@gmail.com'
+      
+      - name: Commit and push changes
+        run: |
+          if [[ -n $(git status -s) ]]; then
+            git add .
+            git commit -m "[AUTO] News dataset update - $(date +%Y-%m-%d_%H:%M:%S)"
+            git push
+          else
+            echo "No changes to commit"
+          fi
