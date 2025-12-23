@@ -156,7 +156,7 @@ def upload_to_hf(category, filename):
 
 def main():
     print(f"Starting news scraper at {datetime.now().isoformat()}")
-    ensure_hf_datasets()
+#     ensure_hf_datasets()
     
     for category, sources in NEWS_SOURCES.items():
         print(f"\n=== Fetching {category.upper()} news ===")
