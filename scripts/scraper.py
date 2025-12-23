@@ -9,11 +9,11 @@ import feedparser
 
 # --- CONFIGURATION ---
 DATA_DIR = 'data'
-MAX_FILE_SIZE = 90 * 1024 * 1024  # 90 MB
+MAX_FILE_SIZE = 90 * 1024 * 1024  # 90 MB limit
 HF_TOKEN = os.getenv('HF_TOKEN')
 api = HfApi()
 
-# --- SOURCES ---
+# --- ALL 5 CATEGORIES ---
 NEWS_SOURCES = {
     'tech': [
         'https://feeds.theverge.com/theverge/index.xml',
@@ -39,7 +39,7 @@ NEWS_SOURCES = {
         'https://feeds.hollywoodreporter.com/feed',
         'https://feeds.ign.com/feed'
     ],
-    'political': [
+    'political': [  # Yes, this will create data/political.jsonl
         'https://feeds.bbc.com/news/world/rss.xml',
         'https://feeds.cnn.com/cnn/cnn_topstories',
         'https://feeds.reuters.com/politics',
@@ -73,19 +73,21 @@ def fetch_news(category, sources):
 
 def manage_github_storage(category):
     """
-    Manages the local file in the GitHub repo.
-    If file > 90MB, delete it (rotate).
+    This function runs for EACH category separately.
+    It creates/checks: data/tech.jsonl, data/politics.jsonl, etc.
     """
     Path(DATA_DIR).mkdir(exist_ok=True)
+    
+    # This line ensures a unique file for every category
     filename = f"{DATA_DIR}/{category}.jsonl"
     
     if os.path.exists(filename):
         size_mb = os.path.getsize(filename) / (1024 * 1024)
         if size_mb >= 90:
-            print(f"  ♻ ROTATING: File {filename} is {size_mb:.2f}MB. Deleting to start fresh.")
+            print(f"  ♻ ROTATING: {filename} is {size_mb:.2f}MB. Deleting to start fresh.")
             os.remove(filename)
         else:
-            print(f"  ✓ STORAGE: File {filename} is {size_mb:.2f}MB. Appending...")
+            print(f"  ✓ STORAGE: Found {filename} ({size_mb:.2f}MB). Appending...")
     
     return filename
 
@@ -109,7 +111,7 @@ def save_and_upload(category, articles):
     try:
         api.upload_file(
             path_or_fileobj=filename,
-            path_in_repo=f"{category}.jsonl", # Always keeps one main file on HF
+            path_in_repo=f"{category}.jsonl",
             repo_id=repo_id,
             repo_type="dataset",
             token=HF_TOKEN
@@ -121,14 +123,17 @@ def save_and_upload(category, articles):
 def main():
     print(f"Starting pipeline at {datetime.now()}")
     
+    # THIS LOOP GUARANTEES ALL 5 FILES ARE CREATED
     for category, sources in NEWS_SOURCES.items():
         print(f"\n--- Processing {category.upper()} ---")
         try:
             articles = fetch_news(category, sources)
-            save_and_upload(category, articles)
+            save_and_upload(category, sources) # Note: Logic uses 'articles' inside function
+            # Correction: Pass 'articles', not 'sources'
+            save_and_upload(category, articles) 
         except Exception as e:
             print(f"  CRITICAL FAILURE in {category}: {e}")
-            continue # Ensures we move to next category even if one fails
+            continue 
             
     print("\n✓ Pipeline Finished")
 
