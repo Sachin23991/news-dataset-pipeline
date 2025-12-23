@@ -12,8 +12,9 @@ DATA_DIR = 'data'
 MAX_FILE_SIZE = 90 * 1024 * 1024  # 90 MB limit
 HF_TOKEN = os.getenv('HF_TOKEN')
 api = HfApi()
+USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 
-# --- ALL 5 CATEGORIES ---
+# --- SOURCES ---
 NEWS_SOURCES = {
     'tech': [
         'https://feeds.theverge.com/theverge/index.xml',
@@ -39,22 +40,26 @@ NEWS_SOURCES = {
         'https://feeds.hollywoodreporter.com/feed',
         'https://feeds.ign.com/feed'
     ],
-    'political': [  # Yes, this will create data/political.jsonl
+    'political': [
         'https://feeds.bbc.com/news/world/rss.xml',
-        'https://feeds.cnn.com/cnn/cnn_topstories',
+        'http://rss.cnn.com/rss/cnn_topstories.rss', # Updated Link
         'https://feeds.reuters.com/politics',
         'https://feeds.theguardian.com/world/rss'
     ]
 }
 
 def fetch_news(category, sources):
-    """Fetch news from RSS feeds."""
+    """Fetch news from RSS feeds with User-Agent to prevent blocking."""
     articles = []
     print(f"  > Fetching {category} news...")
     for source in sources:
         try:
-            feed = feedparser.parse(source)
-            if not feed.entries: continue
+            # Added 'agent' to prevent 403 Forbidden errors from news sites
+            feed = feedparser.parse(source, agent=USER_AGENT)
+            
+            if not feed.entries: 
+                print(f"    ! Empty feed or blocked: {source}")
+                continue
             
             # Get latest 5 articles
             for entry in feed.entries[:5]:
@@ -72,13 +77,8 @@ def fetch_news(category, sources):
     return articles
 
 def manage_github_storage(category):
-    """
-    This function runs for EACH category separately.
-    It creates/checks: data/tech.jsonl, data/politics.jsonl, etc.
-    """
+    """Manages the local file in the GitHub repo."""
     Path(DATA_DIR).mkdir(exist_ok=True)
-    
-    # This line ensures a unique file for every category
     filename = f"{DATA_DIR}/{category}.jsonl"
     
     if os.path.exists(filename):
@@ -93,7 +93,9 @@ def manage_github_storage(category):
 
 def save_and_upload(category, articles):
     """Saves to GitHub folder first, then uploads to HF."""
-    if not articles: return
+    if not articles: 
+        print(f"  ⚠ No articles to save for {category}")
+        return
 
     # 1. Save to GitHub Storage (Append Mode)
     filename = manage_github_storage(category)
@@ -123,13 +125,11 @@ def save_and_upload(category, articles):
 def main():
     print(f"Starting pipeline at {datetime.now()}")
     
-    # THIS LOOP GUARANTEES ALL 5 FILES ARE CREATED
     for category, sources in NEWS_SOURCES.items():
         print(f"\n--- Processing {category.upper()} ---")
         try:
             articles = fetch_news(category, sources)
-            save_and_upload(category, sources) # Note: Logic uses 'articles' inside function
-            # Correction: Pass 'articles', not 'sources'
+            # FIXED: Passing 'articles' list, not 'sources' list
             save_and_upload(category, articles) 
         except Exception as e:
             print(f"  CRITICAL FAILURE in {category}: {e}")
