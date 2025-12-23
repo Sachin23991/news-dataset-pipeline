@@ -4,17 +4,27 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, create_repo
 import feedparser
+import requests
 
 # --- CONFIGURATION ---
 DATA_DIR = 'data'
 MAX_FILE_SIZE = 90 * 1024 * 1024  # 90 MB limit
 HF_TOKEN = os.getenv('HF_TOKEN')
 api = HfApi()
-USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+
+# Real browser headers to avoid being blocked
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+}
 
 # --- SOURCES ---
+# keys must match your Repo names exactly (e.g., 'politics' not 'political')
 NEWS_SOURCES = {
     'tech': [
         'https://feeds.theverge.com/theverge/index.xml',
@@ -40,40 +50,52 @@ NEWS_SOURCES = {
         'https://feeds.hollywoodreporter.com/feed',
         'https://feeds.ign.com/feed'
     ],
-    'political': [
+    'politics': [  # CHANGED to 'politics' to match your Hugging Face repo
         'https://feeds.bbc.com/news/world/rss.xml',
-        'http://rss.cnn.com/rss/cnn_topstories.rss', # Updated Link
+        'http://rss.cnn.com/rss/cnn_topstories.rss',
         'https://feeds.reuters.com/politics',
         'https://feeds.theguardian.com/world/rss'
     ]
 }
 
 def fetch_news(category, sources):
-    """Fetch news from RSS feeds with User-Agent to prevent blocking."""
+    """Fetch news using requests first to bypass bot protection."""
     articles = []
     print(f"  > Fetching {category} news...")
-    for source in sources:
-        try:
-            # Added 'agent' to prevent 403 Forbidden errors from news sites
-            feed = feedparser.parse(source, agent=USER_AGENT)
-            
-            if not feed.entries: 
-                print(f"    ! Empty feed or blocked: {source}")
-                continue
-            
-            # Get latest 5 articles
-            for entry in feed.entries[:5]:
-                articles.append({
-                    'title': entry.get('title', 'No Title'),
-                    'link': entry.get('link', source),
-                    'description': entry.get('summary', 'No summary'),
-                    'category': category,
-                    'source': source,
-                    'published': entry.get('published', str(datetime.now())),
-                    'fetched_at': str(datetime.now())
-                })
-        except Exception as e:
-            print(f"    ! Error reading {source}: {e}")
+    
+    with requests.Session() as session:
+        session.headers.update(HEADERS)
+        
+        for source in sources:
+            try:
+                # 1. Download raw content pretending to be a browser
+                response = session.get(source, timeout=10)
+                if response.status_code != 200:
+                    print(f"    ! Blocked/Error ({response.status_code}): {source}")
+                    continue
+
+                # 2. Parse the content string
+                feed = feedparser.parse(response.content)
+                
+                if not feed.entries:
+                    print(f"    ! Parsed empty data: {source}")
+                    continue
+                
+                # 3. Extract articles
+                for entry in feed.entries[:5]:
+                    articles.append({
+                        'title': entry.get('title', 'No Title'),
+                        'link': entry.get('link', source),
+                        'description': entry.get('summary', 'No summary'),
+                        'category': category,
+                        'source': source,
+                        'published': entry.get('published', str(datetime.now())),
+                        'fetched_at': str(datetime.now())
+                    })
+                    
+            except Exception as e:
+                print(f"    ! Error reading {source}: {e}")
+                
     return articles
 
 def manage_github_storage(category):
@@ -90,6 +112,14 @@ def manage_github_storage(category):
             print(f"  ✓ STORAGE: Found {filename} ({size_mb:.2f}MB). Appending...")
     
     return filename
+
+def ensure_repo_exists(repo_id):
+    """Creates the repo if it doesn't exist (Fixes 404 error)"""
+    try:
+        api.repo_info(repo_id, repo_type="dataset", token=HF_TOKEN)
+    except:
+        print(f"  ! Repo {repo_id} not found. Creating it...")
+        create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True, token=HF_TOKEN)
 
 def save_and_upload(category, articles):
     """Saves to GitHub folder first, then uploads to HF."""
@@ -111,6 +141,7 @@ def save_and_upload(category, articles):
     # 2. Upload to Hugging Face
     repo_id = f"Sachin21112004/news-{category}-dataset"
     try:
+        ensure_repo_exists(repo_id) # Safety check before upload
         api.upload_file(
             path_or_fileobj=filename,
             path_in_repo=f"{category}.jsonl",
@@ -129,7 +160,6 @@ def main():
         print(f"\n--- Processing {category.upper()} ---")
         try:
             articles = fetch_news(category, sources)
-            # FIXED: Passing 'articles' list, not 'sources' list
             save_and_upload(category, articles) 
         except Exception as e:
             print(f"  CRITICAL FAILURE in {category}: {e}")
