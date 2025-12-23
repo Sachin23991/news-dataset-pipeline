@@ -79,7 +79,7 @@ NEWS_SOURCES = {
 
 def ensure_hf_datasets():
     for category in NEWS_SOURCES.keys():
-        repo_id = f"Sachin23991/news-{category}-dataset"
+        repo_id = f"Sachin21112004/news-{category}-dataset"
         try:
             api.repo_info(repo_id, token=HF_TOKEN)
         except:
@@ -140,7 +140,7 @@ def upload_to_hf(category, filename):
     if not os.path.exists(filename) or os.path.getsize(filename) == 0:
         return
     
-    repo_id = f"Sachin23991/news-{category}-dataset"
+    repo_id = f"Sachin21112004/news-{category}-dataset"
     try:
         with open(filename, 'rb') as f:
             api.upload_file(
